@@ -103,6 +103,61 @@
             </div>
         </section>
 
+        <!-- MCP 게시글 관리 섹션 -->
+        <section class="post-management-section">
+            <h2>🤖 MCP 게시글 관리</h2>
+            <div class="management-info">
+                <p><strong>자연어로 게시글을 관리하세요!</strong> AI가 명령을 이해하고 자동으로 처리합니다.</p>
+            </div>
+            
+            <!-- 명령어 도움말 -->
+            <div class="post-command-help">
+                <h3>📋 사용 가능한 명령어</h3>
+                <div class="command-examples">
+                    <div class="example-section">
+                        <h6>📝 게시글 작성</h6>
+                        <ul>
+                            <li>"홍길동으로 새 게시글 작성해줘. 제목은 '4월 매출', 내용은 '증가했습니다', 수치값은 250.5"</li>
+                            <li>"김철수 게시글 추가. 제목 '사용자 증가', 내용 '좋은 성과'"</li>
+                        </ul>
+                    </div>
+                    <div class="example-section">
+                        <h6>✏️ 게시글 수정</h6>
+                        <ul>
+                            <li>"1번 게시글 제목을 '새로운 제목'으로 바꿔줘"</li>
+                            <li>"2번 게시글 내용을 '수정된 내용입니다'로 수정해줘"</li>
+                            <li>"3번 게시글 작성자를 '이영희'로 변경해줘"</li>
+                        </ul>
+                    </div>
+                    <div class="example-section">
+                        <h6>🗑️ 게시글 삭제</h6>
+                        <ul>
+                            <li>"1번 게시글 삭제해줘"</li>
+                            <li>"홍길동의 모든 게시글 삭제해줘"</li>
+                        </ul>
+                    </div>
+                    <div class="example-section">
+                        <h6>📋 게시글 조회</h6>
+                        <ul>
+                            <li>"게시글 목록 보여줘"</li>
+                            <li>"홍길동의 게시글 보여줘"</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="command-input">
+                <input type="text" id="postCommand" placeholder="예: 홍길동으로 새 게시글 작성해줘. 제목은 '4월 매출', 내용은 '증가했습니다'" size="60">
+                <button onclick="executePostCommand()" class="btn btn-post">🚀 실행</button>
+            </div>
+            
+            <!-- 실행 결과 -->
+            <div id="postResult" class="result-container" style="display: none;">
+                <h3>📄 실행 결과</h3>
+                <div id="postResultContent"></div>
+            </div>
+        </section>
+
         <!-- 차트 생성 명령 -->
         <section class="chart-command">
             <h2>📊 차트 생성</h2>
@@ -217,9 +272,45 @@
                     <p>막대차트, 선그래프, 원그래프, 도넛차트를 지원합니다.</p>
                 </div>
             </div>
-        </section>
+                </section>
     </div>
-    
+
+    <!-- 게시글 수정 모달 -->
+    <div id="editModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>📝 게시글 수정</h3>
+                <span class="modal-close" onclick="closeEditModal()">&times;</span>
+            </div>
+            <form id="editForm">
+                <div class="form-group">
+                    <label for="editAuthor">작성자:</label>
+                    <input type="text" id="editAuthor" required>
+                </div>
+                <div class="form-group">
+                    <label for="editTitle">제목:</label>
+                    <input type="text" id="editTitle" required>
+                </div>
+                <div class="form-group">
+                    <label for="editContent">내용:</label>
+                    <textarea id="editContent" rows="5"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="editNumericValue">수치값 (선택사항):</label>
+                    <input type="number" id="editNumericValue" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label for="editCategory">카테고리 (선택사항):</label>
+                    <input type="text" id="editCategory">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeEditModal()">취소</button>
+                    <button type="submit" class="btn btn-primary">수정 완료</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
         // 전역 변수
         let currentChart = null;
@@ -390,8 +481,14 @@
                         ` : ''}
                     </div>
                     <div class="post-footer">
-                        ${post.category ? `<span class="category">${escapeHtml(post.category)}</span>` : ''}
-                        <span class="post-date">${post.created_at ? post.created_at.substring(0, 19) : ''}</span>
+                        <div class="post-meta">
+                            ${post.category ? `<span class="category">${escapeHtml(post.category)}</span>` : ''}
+                            <span class="post-date">${post.created_at ? post.created_at.substring(0, 19) : ''}</span>
+                        </div>
+                        <div class="post-actions">
+                            <button class="btn btn-edit" onclick="openEditModal(${post.id}, '${escapeHtml(post.title).replace(/'/g, '\\\'').replace(/"/g, '&quot;')}', '${escapeHtml(post.content || '').replace(/'/g, '\\\'').replace(/"/g, '&quot;')}', '${escapeHtml(post.author)}', ${post.numeric_value || 'null'}, '${escapeHtml(post.category || '')}')">✏️ 수정</button>
+                            <button class="btn btn-delete" onclick="deletePost(${post.id}, '${escapeHtml(post.title)}')">🗑️ 삭제</button>
+                        </div>
                     </div>
                 </div>
             `).join('');
@@ -750,6 +847,298 @@
                 showMessage('자동 새로고침이 중지되었습니다.', 'info');
             }
         }
+        
+        // === 게시글 수정/삭제 관련 함수들 ===
+        
+        let currentEditPostId = null;
+        
+        // 수정 모달 열기
+        function openEditModal(postId, title, content, author, numericValue, category) {
+            currentEditPostId = postId;
+            
+            // 폼 필드 채우기
+            document.getElementById('editAuthor').value = author;
+            document.getElementById('editTitle').value = title;
+            document.getElementById('editContent').value = content || '';
+            document.getElementById('editNumericValue').value = numericValue || '';
+            document.getElementById('editCategory').value = category || '';
+            
+            // 모달 표시
+            document.getElementById('editModal').style.display = 'block';
+        }
+        
+        // 수정 모달 닫기
+        function closeEditModal() {
+            document.getElementById('editModal').style.display = 'none';
+            currentEditPostId = null;
+        }
+        
+        // 게시글 수정
+        async function updatePost(event) {
+            event.preventDefault();
+            
+            if (!currentEditPostId) {
+                showMessage('수정할 게시글이 선택되지 않았습니다.', 'error');
+                return;
+            }
+            
+            const updateData = {
+                title: document.getElementById('editTitle').value.trim(),
+                content: document.getElementById('editContent').value.trim(),
+                author: document.getElementById('editAuthor').value.trim()
+            };
+            
+            if (!updateData.title || !updateData.author) {
+                showMessage('제목과 작성자는 필수입니다.', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/posts/${currentEditPostId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(updateData)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage('게시글이 수정되었습니다.', 'success');
+                    closeEditModal();
+                    await loadPosts(); // 게시글 목록 새로고침
+                } else {
+                    showMessage('게시글 수정 실패: ' + result.message, 'error');
+                }
+            } catch (error) {
+                console.error('게시글 수정 오류:', error);
+                showMessage('게시글 수정 중 오류가 발생했습니다.', 'error');
+            }
+        }
+        
+        // 게시글 삭제
+        async function deletePost(postId, title) {
+            if (!confirm(`'${title}' 게시글을 정말 삭제하시겠습니까?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/posts/${postId}`, {
+                    method: 'DELETE'
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage('게시글이 삭제되었습니다.', 'success');
+                    await loadPosts(); // 게시글 목록 새로고침
+                } else {
+                    showMessage('게시글 삭제 실패: ' + result.message, 'error');
+                }
+            } catch (error) {
+                console.error('게시글 삭제 오류:', error);
+                showMessage('게시글 삭제 중 오류가 발생했습니다.', 'error');
+            }
+        }
+        
+        // 수정 폼 제출 이벤트 리스너 추가
+        document.getElementById('editForm').addEventListener('submit', updatePost);
+        
+        // 모달 외부 클릭 시 닫기
+        window.onclick = function(event) {
+            const modal = document.getElementById('editModal');
+            if (event.target == modal) {
+                closeEditModal();
+            }
+        }
+        
+        // === MCP 게시글 관리 관련 함수들 ===
+        
+        // 게시글 관리 명령 실행
+        async function executePostCommand() {
+            const command = document.getElementById('postCommand').value.trim();
+            
+            if (!command) {
+                showMessage('명령을 입력해주세요.', 'warning');
+                return;
+            }
+            
+            // 로딩 상태 표시
+            showMessage('🤖 MCP가 명령을 처리 중입니다...', 'info');
+            document.getElementById('postResult').style.display = 'none';
+            
+            try {
+                const response = await fetch('/manage-post', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ command: command })
+                });
+                
+                const result = await response.json();
+                
+                // 결과 표시
+                displayPostResult(result);
+                
+                // 성공 시 게시글 목록 새로고침 (create, update, delete 액션의 경우)
+                if (result.success && result.action && ['create', 'update', 'delete'].includes(result.action)) {
+                    await loadPosts();
+                }
+                
+                // 입력 필드 초기화
+                document.getElementById('postCommand').value = '';
+                
+            } catch (error) {
+                console.error('게시글 관리 오류:', error);
+                showMessage('게시글 관리 중 오류가 발생했습니다: ' + error.message, 'error');
+                document.getElementById('postResult').style.display = 'none';
+            }
+        }
+        
+        // 게시글 관리 결과 표시
+        function displayPostResult(result) {
+            const resultContainer = document.getElementById('postResult');
+            const resultContent = document.getElementById('postResultContent');
+            
+            // 기본 정보 표시
+            let html = `
+                <div class="result-summary ${result.success ? 'success' : 'error'}">
+                    <div class="result-status">
+                        <span class="status-icon">${result.success ? '✅' : '❌'}</span>
+                        <span class="status-message">${escapeHtml(result.message)}</span>
+                    </div>
+            `;
+            
+            // 파싱 결과 표시
+            if (result.parsed_result) {
+                const parsed = result.parsed_result;
+                html += `
+                    <div class="parse-info">
+                        <h4>🧠 AI 파싱 정보</h4>
+                        <div class="parse-details">
+                            <span class="parse-item"><strong>액션:</strong> ${escapeHtml(parsed.action || 'N/A')}</span>
+                            <span class="parse-item"><strong>신뢰도:</strong> ${(parsed.confidence * 100).toFixed(0)}%</span>
+                            <span class="parse-item"><strong>방식:</strong> ${escapeHtml(parsed.method || 'N/A')}</span>
+                        </div>
+                        <div class="parse-explanation">
+                            <strong>설명:</strong> ${escapeHtml(parsed.explanation || '')}
+                        </div>
+                    </div>
+                `;
+            }
+            
+            html += `</div>`;
+            
+            // 액션별 세부 정보 표시
+            if (result.success && result.action) {
+                html += `<div class="action-details">`;
+                
+                switch (result.action) {
+                    case 'create':
+                        if (result.post) {
+                            html += `
+                                <h4>📝 생성된 게시글</h4>
+                                <div class="created-post">
+                                    <div class="post-info">
+                                        <strong>ID:</strong> ${result.post.id}<br>
+                                        <strong>제목:</strong> ${escapeHtml(result.post.title)}<br>
+                                        <strong>작성자:</strong> ${escapeHtml(result.post.author)}<br>
+                                        <strong>내용:</strong> ${escapeHtml(result.post.content || '내용 없음')}<br>
+                                        ${result.post.numeric_value ? `<strong>수치값:</strong> ${result.post.numeric_value}<br>` : ''}
+                                        ${result.post.category ? `<strong>카테고리:</strong> ${escapeHtml(result.post.category)}<br>` : ''}
+                                    </div>
+                                </div>
+                            `;
+                        }
+                        break;
+                        
+                    case 'update':
+                        html += `
+                            <h4>✏️ 수정 정보</h4>
+                            <div class="update-info">
+                                <strong>게시글 ID:</strong> ${result.post_id}<br>
+                                <strong>수정된 필드:</strong> ${escapeHtml(result.field)}<br>
+                                <strong>새로운 값:</strong> ${escapeHtml(result.new_value)}
+                            </div>
+                        `;
+                        break;
+                        
+                    case 'delete':
+                        if (result.deleted_count !== undefined) {
+                            html += `
+                                <h4>🗑️ 삭제 정보</h4>
+                                <div class="delete-info">
+                                    <strong>작성자:</strong> ${escapeHtml(result.filter_author)}<br>
+                                    <strong>삭제된 게시글 수:</strong> ${result.deleted_count}개
+                                </div>
+                            `;
+                        } else if (result.post_id) {
+                            html += `
+                                <h4>🗑️ 삭제 정보</h4>
+                                <div class="delete-info">
+                                    <strong>삭제된 게시글 ID:</strong> ${result.post_id}
+                                </div>
+                            `;
+                        }
+                        break;
+                        
+                    case 'list':
+                        html += `
+                            <h4>📋 조회 정보</h4>
+                            <div class="list-info">
+                                <strong>찾은 게시글 수:</strong> ${result.count}개
+                                ${result.filter_author ? `<br><strong>작성자:</strong> ${escapeHtml(result.filter_author)}` : ''}
+                            </div>
+                        `;
+                        
+                        if (result.posts && result.posts.length > 0) {
+                            html += `
+                                <div class="posts-preview">
+                                    <h5>📄 게시글 목록 (최근 5개)</h5>
+                                    <div class="posts-list">
+                            `;
+                            
+                            // 최근 5개만 표시
+                            const postsToShow = result.posts.slice(0, 5);
+                            postsToShow.forEach(post => {
+                                html += `
+                                    <div class="post-preview">
+                                        <strong>[${post.id}] ${escapeHtml(post.title)}</strong> - ${escapeHtml(post.author)}
+                                        <br><small>${escapeHtml(post.content ? post.content.substring(0, 100) : '내용 없음')}${post.content && post.content.length > 100 ? '...' : ''}</small>
+                                    </div>
+                                `;
+                            });
+                            
+                            html += `
+                                    </div>
+                                </div>
+                            `;
+                            
+                            if (result.posts.length > 5) {
+                                html += `<p><small>... 외 ${result.posts.length - 5}개 더</small></p>`;
+                            }
+                        }
+                        break;
+                }
+                
+                html += `</div>`;
+            }
+            
+            resultContent.innerHTML = html;
+            resultContainer.style.display = 'block';
+            
+            // 결과로 스크롤
+            resultContainer.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        // Enter 키로 게시글 명령 실행
+        document.getElementById('postCommand').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                executePostCommand();
+            }
+        });
     </script>
 </body>
 </html>

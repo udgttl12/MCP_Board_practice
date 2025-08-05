@@ -98,6 +98,49 @@ class DatabaseManager:
             return [author[0] for author in authors]
         finally:
             session.close()
+    
+    def get_post_by_id(self, post_id):
+        """ID로 게시글 조회"""
+        session = self.get_session()
+        try:
+            post = session.query(Post).filter(Post.id == post_id).first()
+            return post
+        finally:
+            session.close()
+    
+    def update_post(self, post_id, title, content, author):
+        """게시글 수정"""
+        session = self.get_session()
+        try:
+            post = session.query(Post).filter(Post.id == post_id).first()
+            if post:
+                post.title = title
+                post.content = content
+                post.author = author
+                session.commit()
+                return True
+            return False
+        except Exception as e:
+            session.rollback()
+            raise e
+        finally:
+            session.close()
+    
+    def delete_post(self, post_id):
+        """게시글 삭제"""
+        session = self.get_session()
+        try:
+            post = session.query(Post).filter(Post.id == post_id).first()
+            if post:
+                session.delete(post)
+                session.commit()
+                return True
+            return False
+        except Exception as e:
+            session.rollback()
+            raise e
+        finally:
+            session.close()
 
 # 전역 데이터베이스 매니저 인스턴스
 db_manager = DatabaseManager()

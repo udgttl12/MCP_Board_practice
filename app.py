@@ -21,6 +21,14 @@ from mcp_logger import mcp_logger, log_mcp_error
 class ChartRequest(BaseModel):
     command: str
 
+class PostUpdate(BaseModel):
+    title: str
+    content: str
+    author: str
+
+class PostManagementRequest(BaseModel):
+    command: str
+
 class PostRequest(BaseModel):
     author: str
     title: str
@@ -132,12 +140,34 @@ async def create_chart(request: ChartRequest):
         
         # 다중 작성자 또는 단일 작성자 차트 생성
         if parsed.get('is_multi_author') and parsed.get('author_names'):
-            # 다중 작성자 차트 생성
-            from mcp_server_real import real_mcp_server
-            result = await real_mcp_server.generate_multi_author_chart(
-                parsed['author_names'], 
-                parsed['chart_type']
-            )
+            # "모든 사람들" 특별 처리
+            if parsed['author_names'] == "ALL_AUTHORS":
+                # 데이터베이스에서 모든 작성자 가져오기
+                authors_result = await get_available_authors()
+                all_authors = authors_result.get('authors', [])
+                
+                if not all_authors:
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "success": False,
+                            "message": "데이터베이스에 작성자가 없습니다."
+                        }
+                    )
+                
+                # 모든 작성자로 다중 차트 생성
+                from mcp_server_real import real_mcp_server
+                result = await real_mcp_server.generate_multi_author_chart(
+                    all_authors, 
+                    parsed['chart_type']
+                )
+            else:
+                # 일반 다중 작성자 차트 생성
+                from mcp_server_real import real_mcp_server
+                result = await real_mcp_server.generate_multi_author_chart(
+                    parsed['author_names'], 
+                    parsed['chart_type']
+                )
         else:
             # 단일 작성자 차트 생성 (기존 방식)
             result = await generate_author_chart(
@@ -155,6 +185,293 @@ async def create_chart(request: ChartRequest):
                 "message": f"서버 오류가 발생했습니다: {str(e)}"
             }
         )
+
+@app.post("/manage-post")
+async def manage_post_with_mcp(request: PostManagementRequest):
+    """MCP를 통한 자연어 게시글 관리 API"""
+    try:
+        # MCP로 명령 파싱
+        from mcp_server_real import real_mcp_server
+        parsed_result = await real_mcp_server.parse_post_management_command(request.command)
+        
+        if not parsed_result.get("valid"):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "message": f"명령을 이해할 수 없습니다: {parsed_result.get('explanation', '알 수 없는 오류')}",
+                    "parsed_result": parsed_result
+                }
+            )
+        
+        action = parsed_result.get("action")
+        
+        # 액션별 처리
+        if action == "create":
+            # 게시글 생성
+            result = await _handle_create_post(parsed_result)
+            
+        elif action == "update":
+            # 게시글 수정
+            result = await _handle_update_post(parsed_result)
+            
+        elif action == "delete":
+            # 게시글 삭제
+            result = await _handle_delete_post(parsed_result)
+            
+        elif action == "list":
+            # 게시글 목록 조회
+            result = await _handle_list_posts(parsed_result)
+            
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "message": f"지원하지 않는 액션입니다: {action}",
+                    "parsed_result": parsed_result
+                }
+            )
+        
+        # MCP 로그 기록
+        await mcp_logger.log_system_event(f"MCP 게시글 관리 - {action}", {
+            "command": request.command,
+            "action": action,
+            "success": result.get("success", False),
+            "method": parsed_result.get("method", "unknown")
+        })
+        
+        # 파싱 결과도 함께 반환
+        if isinstance(result, dict):
+            result["parsed_result"] = parsed_result
+            
+            # status_code가 있으면 JSONResponse로 처리
+            if "status_code" in result:
+                status_code = result.pop("status_code")
+                return JSONResponse(status_code=status_code, content=result)
+        
+        return JSONResponse(content=result)
+        
+    except Exception as e:
+        await log_mcp_error("system", f"MCP 게시글 관리 오류: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "message": f"게시글 관리 중 오류가 발생했습니다: {str(e)}"
+            }
+        )
+
+# MCP 게시글 관리 헬퍼 함수들
+async def _handle_create_post(parsed_result: dict):
+    """게시글 생성 처리"""
+    try:
+        author = parsed_result.get("author")
+        title = parsed_result.get("title")
+        content = parsed_result.get("content", "")
+        numeric_value = parsed_result.get("numeric_value")
+        category = parsed_result.get("category")
+        
+        if not author or not title:
+            return {
+                "success": False,
+                "message": "게시글 생성에는 작성자와 제목이 필요합니다.",
+                "status_code": 400
+            }
+        
+        # 데이터베이스에 게시글 저장
+        post = db_manager.add_post(
+            author=author,
+            title=title,
+            content=content,
+            numeric_value=numeric_value,
+            category=category
+        )
+        
+        return {
+            "success": True,
+            "message": f"게시글 '{title}'이(가) 성공적으로 생성되었습니다.",
+            "post": post,
+            "action": "create"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"게시글 생성 중 오류가 발생했습니다: {str(e)}",
+            "status_code": 500
+        }
+
+async def _handle_update_post(parsed_result: dict):
+    """게시글 수정 처리"""
+    try:
+        post_id = parsed_result.get("post_id")
+        field_to_update = parsed_result.get("field_to_update")
+        new_value = parsed_result.get("new_value")
+        
+        if not post_id or not field_to_update or new_value is None:
+            return {
+                "success": False,
+                "message": "게시글 수정에는 게시글 ID, 수정할 필드, 새로운 값이 필요합니다.",
+                "status_code": 400
+            }
+        
+        # 게시글 존재 여부 확인
+        existing_post = db_manager.get_post_by_id(post_id)
+        if not existing_post:
+            return {
+                "success": False,
+                "message": f"{post_id}번 게시글을 찾을 수 없습니다.",
+                "status_code": 404
+            }
+        
+        # 필드별 수정 처리 (한국어/영어 필드명 매핑)
+        if field_to_update in ["title", "제목"]:
+            success = db_manager.update_post(post_id, new_value, existing_post.content, existing_post.author)
+        elif field_to_update in ["content", "내용"]:
+            success = db_manager.update_post(post_id, existing_post.title, new_value, existing_post.author)
+        elif field_to_update in ["author", "작성자"]:
+            success = db_manager.update_post(post_id, existing_post.title, existing_post.content, new_value)
+        else:
+            return {
+                "success": False,
+                "message": f"지원하지 않는 필드입니다: {field_to_update}. 사용 가능한 필드: title, content, author",
+                "status_code": 400
+            }
+        
+        if success:
+            return {
+                "success": True,
+                "message": f"{post_id}번 게시글의 {field_to_update}이(가) 성공적으로 수정되었습니다.",
+                "action": "update",
+                "post_id": post_id,
+                "field": field_to_update,
+                "new_value": new_value
+            }
+        else:
+            return {
+                "success": False,
+                "message": "게시글 수정에 실패했습니다.",
+                "status_code": 500
+            }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"게시글 수정 중 오류가 발생했습니다: {str(e)}",
+            "status_code": 500
+        }
+
+async def _handle_delete_post(parsed_result: dict):
+    """게시글 삭제 처리"""
+    try:
+        post_id = parsed_result.get("post_id")
+        filter_author = parsed_result.get("filter_author")
+        
+        if post_id:
+            # 특정 게시글 삭제
+            existing_post = db_manager.get_post_by_id(post_id)
+            if not existing_post:
+                return {
+                    "success": False,
+                    "message": f"{post_id}번 게시글을 찾을 수 없습니다.",
+                    "status_code": 404
+                }
+            
+            success = db_manager.delete_post(post_id)
+            if success:
+                return {
+                    "success": True,
+                    "message": f"{post_id}번 게시글 '{existing_post.title}'이(가) 성공적으로 삭제되었습니다.",
+                    "action": "delete",
+                    "post_id": post_id
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "게시글 삭제에 실패했습니다.",
+                    "status_code": 500
+                }
+                
+        elif filter_author:
+            # 특정 작성자의 모든 게시글 삭제
+            author_posts = db_manager.get_posts_by_author(filter_author)
+            if not author_posts:
+                return {
+                    "success": False,
+                    "message": f"'{filter_author}' 작성자의 게시글을 찾을 수 없습니다.",
+                    "status_code": 404
+                }
+            
+            deleted_count = 0
+            for post in author_posts:
+                if db_manager.delete_post(post['id']):
+                    deleted_count += 1
+            
+            return {
+                "success": True,
+                "message": f"'{filter_author}' 작성자의 게시글 {deleted_count}개가 성공적으로 삭제되었습니다.",
+                "action": "delete",
+                "filter_author": filter_author,
+                "deleted_count": deleted_count
+            }
+        else:
+            return {
+                "success": False,
+                "message": "삭제할 게시글 ID 또는 작성자명이 필요합니다.",
+                "status_code": 400
+            }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"게시글 삭제 중 오류가 발생했습니다: {str(e)}",
+            "status_code": 500
+        }
+
+async def _handle_list_posts(parsed_result: dict):
+    """게시글 목록 조회 처리"""
+    try:
+        filter_author = parsed_result.get("filter_author")
+        
+        if filter_author:
+            # 특정 작성자의 게시글 목록
+            posts = db_manager.get_posts_by_author(filter_author)
+            if not posts:
+                return {
+                    "success": True,
+                    "message": f"'{filter_author}' 작성자의 게시글이 없습니다.",
+                    "action": "list",
+                    "filter_author": filter_author,
+                    "posts": [],
+                    "count": 0
+                }
+            
+            return {
+                "success": True,
+                "message": f"'{filter_author}' 작성자의 게시글 {len(posts)}개를 찾았습니다.",
+                "action": "list",
+                "filter_author": filter_author,
+                "posts": posts,
+                "count": len(posts)
+            }
+        else:
+            # 전체 게시글 목록
+            posts = db_manager.get_all_posts()
+            return {
+                "success": True,
+                "message": f"전체 게시글 {len(posts)}개를 찾았습니다.",
+                "action": "list",
+                "posts": posts,
+                "count": len(posts)
+            }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"게시글 목록 조회 중 오류가 발생했습니다: {str(e)}",
+            "status_code": 500
+        }
 
 @app.post("/add-post")
 async def add_post(request: PostRequest):
@@ -194,6 +511,76 @@ async def add_post(request: PostRequest):
                 "success": False,
                 "message": f"게시글 추가 중 오류가 발생했습니다: {str(e)}"
             }
+        )
+
+@app.put("/posts/{post_id}")
+async def update_post(post_id: int, post_data: PostUpdate):
+    """게시글 수정"""
+    try:
+        # 게시글 존재 여부 확인
+        existing_post = db_manager.get_post_by_id(post_id)
+        if not existing_post:
+            return JSONResponse(
+                status_code=404,
+                content={"success": False, "message": "게시글을 찾을 수 없습니다."}
+            )
+        
+        # 게시글 업데이트
+        success = db_manager.update_post(post_id, post_data.title, post_data.content, post_data.author)
+        
+        if success:
+            await mcp_logger.log_system_event("게시글 수정", {
+                "post_id": post_id, 
+                "title": post_data.title,
+                "author": post_data.author
+            })
+            return JSONResponse(content={"success": True, "message": "게시글이 수정되었습니다."})
+        else:
+            return JSONResponse(
+                status_code=500,
+                content={"success": False, "message": "게시글 수정에 실패했습니다."}
+            )
+        
+    except Exception as e:
+        await log_mcp_error("system", f"게시글 수정 오류: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": f"게시글 수정 중 오류가 발생했습니다: {str(e)}"}
+        )
+
+@app.delete("/posts/{post_id}")
+async def delete_post(post_id: int):
+    """게시글 삭제"""
+    try:
+        # 게시글 존재 여부 확인
+        existing_post = db_manager.get_post_by_id(post_id)
+        if not existing_post:
+            return JSONResponse(
+                status_code=404,
+                content={"success": False, "message": "게시글을 찾을 수 없습니다."}
+            )
+        
+        # 게시글 삭제
+        success = db_manager.delete_post(post_id)
+        
+        if success:
+            await mcp_logger.log_system_event("게시글 삭제", {
+                "post_id": post_id,
+                "title": existing_post.title,
+                "author": existing_post.author
+            })
+            return JSONResponse(content={"success": True, "message": "게시글이 삭제되었습니다."})
+        else:
+            return JSONResponse(
+                status_code=500,
+                content={"success": False, "message": "게시글 삭제에 실패했습니다."}
+            )
+        
+    except Exception as e:
+        await log_mcp_error("system", f"게시글 삭제 오류: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": f"게시글 삭제 중 오류가 발생했습니다: {str(e)}"}
         )
 
 @app.get("/posts")

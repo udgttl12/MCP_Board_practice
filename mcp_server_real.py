@@ -185,9 +185,12 @@ class RealMCPServer:
 작성자명 추출 규칙:
 - 단일: "홍길동의", "김철수님의", "이영희 데이터" → author_name: "홍길동", is_multi_author: false
 - 다중: "홍길동과 김철수", "홍길동, 김철수의", "홍길동 김철수 데이터" → author_names: ["홍길동", "김철수"], is_multi_author: true
+- 전체: "모든 사람들", "전체", "모든 작성자", "모두", "모든 사람" → author_names: "ALL_AUTHORS", is_multi_author: true
 - 없음: 작성자 언급 없음 → author_names: null, author_name: null, is_multi_author: false
 
-여러 작성자가 감지되면 is_multi_author를 true로, author_names 배열에 모든 작성자를 포함하세요.
+특별 처리:
+- "모든 사람들", "전체", "모든 작성자" 등의 표현은 author_names: "ALL_AUTHORS"로 설정
+- 여러 작성자가 감지되면 is_multi_author를 true로, author_names 배열에 모든 작성자를 포함하세요.
 """
 
             response = await self.client.messages.create(
@@ -319,28 +322,54 @@ class RealMCPServer:
                 if chart_type != "bar":
                     break
             
-            # 다중 작성자 감지 시도
-            multi_author_patterns = [
-                r'(\w+)(?:과|와|,)\s*(\w+)',  # "홍길동과 김철수"
-                r'(\w+)\s+(\w+)(?:\s+데이터|의)',  # "홍길동 김철수 데이터"
+            # "모든 사람들" 관련 표현 감지
+            all_authors_patterns = [
+                r'모든\s*사람들?',
+                r'전체\s*(?:사람들?|작성자|데이터)',
+                r'모든\s*작성자',
+                r'모두(?:\s*데이터|의)?',
+                r'전부(?:\s*데이터|의)?'
             ]
             
             author_names = []
-            for pattern in multi_author_patterns:
-                matches = re.findall(pattern, command)
-                if matches:
-                    for match in matches:
-                        author_names.extend([name.strip() for name in match if name.strip()])
+            is_multi_author = False
+            
+            # 먼저 "모든 사람들" 패턴 확인
+            for pattern in all_authors_patterns:
+                if re.search(pattern, command):
+                    author_names = "ALL_AUTHORS"
+                    is_multi_author = True
                     break
             
-            # 중복 제거
-            author_names = list(dict.fromkeys(author_names))
+            # "모든 사람들"이 아닌 경우 다중 작성자 감지 시도
+            if not is_multi_author:
+                multi_author_patterns = [
+                    r'(\w+)(?:과|와|,)\s*(\w+)',  # "홍길동과 김철수"
+                    r'(\w+)\s+(\w+)(?:\s+데이터|의)',  # "홍길동 김철수 데이터"
+                ]
+                
+                for pattern in multi_author_patterns:
+                    matches = re.findall(pattern, command)
+                    if matches:
+                        for match in matches:
+                            author_names.extend([name.strip() for name in match if name.strip()])
+                        break
+                
+                # 중복 제거
+                if author_names:
+                    author_names = list(dict.fromkeys(author_names))
+                    is_multi_author = len(author_names) > 1
             
-            is_multi_author = len(author_names) > 1
+            # author_name 처리 (ALL_AUTHORS인 경우 단일 작성자 없음)
+            single_author = None
+            if author_names == "ALL_AUTHORS":
+                single_author = None
+            elif isinstance(author_names, list) and len(author_names) == 1:
+                single_author = author_names[0]
             
             return {
                 "author_names": author_names if author_names else None,
-                "author_name": author_names[0] if len(author_names) == 1 else None,
+                "author_name": single_author,
                 "chart_type": chart_type,
                 "valid": bool(author_names),
                 "confidence": 0.8 if author_names else 0.0,
@@ -841,6 +870,269 @@ window.myChart = new Chart(ctx, {{
                 status["api_test"] = f"❌ 실패: {str(e)}"
         
         return status
+    
+    # === 게시글 관리 MCP 기능들 ===
+    
+    async def parse_post_management_command(self, command: str) -> Dict[str, Any]:
+        """
+        게시글 관리 명령을 자연어로 파싱
+        
+        Args:
+            command (str): 자연어 게시글 관리 명령
+            
+        Returns:
+            dict: 파싱된 결과
+        """
+        start_time = time.time()
+        await mcp_logger.log_api_call("parse_post_management_command", {"command": command})
+        
+        try:
+            if self.is_real_mcp_available():
+                # AI를 사용한 파싱
+                result = await self._parse_post_command_with_ai(command)
+                
+                # 성공 로그 기록
+                duration_ms = (time.time() - start_time) * 1000
+                await mcp_logger.log_parsing(command, result, duration_ms)
+                await mcp_logger.log_api_response("parse_post_management_command", True, duration_ms, result)
+                
+                return result
+            else:
+                # 정규표현식 기반 파싱 (fallback)
+                await mcp_logger.log("warning", "parsing", "API 키 미설정으로 시뮬레이션 모드로 전환")
+                result = self._parse_post_command_fallback(command)
+                
+                # 성공 로그 기록
+                duration_ms = (time.time() - start_time) * 1000
+                await mcp_logger.log_parsing(command, result, duration_ms)
+                await mcp_logger.log_api_response("parse_post_management_command", True, duration_ms, result)
+                
+                return result
+                
+        except Exception as e:
+            error_msg = f"게시글 관리 명령 파싱 실패: {str(e)}"
+            print(f"❌ {error_msg}")
+            
+            # 오류 로그 기록
+            duration_ms = (time.time() - start_time) * 1000
+            await mcp_logger.log_parsing(command, {"valid": False, "error": str(e), "method": "error"}, duration_ms)
+            await mcp_logger.log_error("parsing", error_msg, {"command": command, "error": str(e)})
+            
+            return {
+                "action": None,
+                "valid": False,
+                "confidence": 0.0,
+                "explanation": error_msg,
+                "method": "error",
+                "original_command": command
+            }
+    
+    async def _parse_post_command_with_ai(self, command: str) -> Dict[str, Any]:
+        """AI를 사용한 게시글 관리 명령 파싱"""
+        try:
+            prompt = f"""
+다음 한국어 명령을 분석해서 게시글 관리 정보를 추출해주세요:
+
+명령: "{command}"
+
+다음 JSON 형식으로 응답해주세요:
+{{
+    "action": "create|update|delete|list 중 하나",
+    "post_id": 게시글ID (숫자, 수정/삭제시 필요, 없으면 null),
+    "author": "작성자명 (생성시 필요, 없으면 null)",
+    "title": "제목 (생성/수정시, 없으면 null)",
+    "content": "내용 (생성/수정시, 없으면 null)",
+    "numeric_value": 수치값 (숫자, 선택사항, 없으면 null),
+    "category": "카테고리 (선택사항, 없으면 null)",
+    "field_to_update": "수정할 필드명 (update시: title|content|author|numeric_value|category, 없으면 null)",
+    "new_value": "새로운 값 (update시, 없으면 null)",
+    "filter_author": "특정 작성자 (delete시 '모든', 없으면 null)",
+    "valid": true/false,
+    "confidence": 0.0-1.0,
+    "explanation": "파싱 결과 설명"
+}}
+
+명령 유형별 예시:
+1. 생성: "홍길동으로 새 게시글 작성해줘. 제목은 '4월 매출', 내용은 '증가했습니다', 수치값은 250.5"
+   → action: "create", author: "홍길동", title: "4월 매출", content: "증가했습니다", numeric_value: 250.5
+
+2. 수정: "1번 게시글 제목을 '새 제목'으로 바꿔줘"
+   → action: "update", post_id: 1, field_to_update: "title", new_value: "새 제목"
+
+3. 삭제: "2번 게시글 삭제해줘"
+   → action: "delete", post_id: 2
+
+4. 전체 삭제: "홍길동의 모든 게시글 삭제해줘"
+   → action: "delete", filter_author: "홍길동"
+
+5. 목록: "게시글 목록 보여줘" 또는 "홍길동의 게시글 보여줘"
+   → action: "list", filter_author: "홍길동" (또는 null)
+"""
+
+            response = await self.client.messages.create(
+                model=config.DEFAULT_MODEL,
+                max_tokens=1000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            response_text = response.content[0].text.strip()
+            print(f"🤖 AI 게시글 관리 파싱 결과: {response_text}")
+            
+            # JSON 파싱
+            try:
+                parsed_result = json.loads(response_text)
+                parsed_result["method"] = "ai_powered"
+                parsed_result["original_command"] = command
+                return parsed_result
+            except json.JSONDecodeError as e:
+                print(f"❌ JSON 파싱 오류: {e}")
+                return self._parse_post_command_fallback(command)
+                
+        except Exception as e:
+            error_msg = f"AI 게시글 관리 명령 파싱 중 오류: {str(e)}"
+            print(f"❌ {error_msg}")
+            await log_mcp_error("parsing", error_msg)
+            
+            # fallback으로 정규표현식 사용
+            return self._parse_post_command_fallback(command)
+    
+    def _parse_post_command_fallback(self, command: str) -> Dict[str, Any]:
+        """정규표현식 기반 게시글 관리 명령 파싱 (fallback)"""
+        try:
+            command_lower = command.lower()
+            
+            # 기본 결과
+            result = {
+                "action": None,
+                "post_id": None,
+                "author": None,
+                "title": None,
+                "content": None,
+                "numeric_value": None,
+                "category": None,
+                "field_to_update": None,
+                "new_value": None,
+                "filter_author": None,
+                "valid": False,
+                "confidence": 0.7,
+                "explanation": "정규표현식으로 파싱됨",
+                "method": "regex_fallback",
+                "original_command": command
+            }
+            
+            # 1. 게시글 생성 패턴
+            create_patterns = [
+                r'(.+?)(?:으로|로)\s*(?:새\s*)?게시글\s*작성',
+                r'(.+?)\s*게시글\s*(?:추가|생성|작성)',
+                r'새\s*게시글.*?작성자(?:\s*:|\s*는)?\s*(.+?)(?:\s|$)',
+                r'게시글\s*(?:추가|생성|작성).*?(.+?)(?:으로|로)'
+            ]
+            
+            for pattern in create_patterns:
+                match = re.search(pattern, command)
+                if match:
+                    result["action"] = "create"
+                    result["author"] = match.group(1).strip()
+                    result["valid"] = True
+                    
+                    # 제목 추출
+                    title_patterns = [
+                        r'제목(?:\s*:|\s*은|\s*는)?\s*[\'"]([^\'\"]+)[\'"]',
+                        r'제목(?:\s*:|\s*은|\s*는)?\s*(.+?)(?:\s*,|\s*내용|\s*$)'
+                    ]
+                    for title_pattern in title_patterns:
+                        title_match = re.search(title_pattern, command)
+                        if title_match:
+                            result["title"] = title_match.group(1).strip()
+                            break
+                    
+                    # 내용 추출
+                    content_patterns = [
+                        r'내용(?:\s*:|\s*은|\s*는)?\s*[\'"]([^\'\"]+)[\'"]',
+                        r'내용(?:\s*:|\s*은|\s*는)?\s*(.+?)(?:\s*,|\s*수치|\s*$)'
+                    ]
+                    for content_pattern in content_patterns:
+                        content_match = re.search(content_pattern, command)
+                        if content_match:
+                            result["content"] = content_match.group(1).strip()
+                            break
+                    
+                    # 수치값 추출
+                    numeric_match = re.search(r'수치(?:값)?(?:\s*:|\s*은|\s*는)?\s*([\d.]+)', command)
+                    if numeric_match:
+                        try:
+                            result["numeric_value"] = float(numeric_match.group(1))
+                        except ValueError:
+                            pass
+                    
+                    break
+            
+            # 2. 게시글 수정 패턴
+            if not result["valid"]:
+                update_patterns = [
+                    r'(\d+)번\s*게시글.*?(제목|내용|작성자)(?:\s*을|\s*를)?\s*[\'"]?([^\'\"]+)[\'"]?(?:으로|로)\s*(?:바꿔|수정|변경)',
+                    r'(\d+)번.*?(제목|내용|작성자)\s*(?:수정|변경|바꿔).*?[\'"]?([^\'\"]+)[\'"]?'
+                ]
+                
+                for pattern in update_patterns:
+                    match = re.search(pattern, command)
+                    if match:
+                        result["action"] = "update"
+                        result["post_id"] = int(match.group(1))
+                        result["field_to_update"] = match.group(2)
+                        result["new_value"] = match.group(3).strip()
+                        result["valid"] = True
+                        break
+            
+            # 3. 게시글 삭제 패턴
+            if not result["valid"]:
+                delete_patterns = [
+                    r'(\d+)번\s*게시글\s*삭제',
+                    r'게시글\s*(\d+)\s*삭제',
+                    r'(.+?)(?:의)?\s*(?:모든\s*)?게시글\s*(?:모두\s*)?삭제'
+                ]
+                
+                for i, pattern in enumerate(delete_patterns):
+                    match = re.search(pattern, command)
+                    if match:
+                        result["action"] = "delete"
+                        result["valid"] = True
+                        
+                        if i < 2:  # 특정 게시글 삭제
+                            result["post_id"] = int(match.group(1))
+                        else:  # 작성자별 전체 삭제
+                            result["filter_author"] = match.group(1).strip()
+                        break
+            
+            # 4. 게시글 목록 패턴
+            if not result["valid"]:
+                list_patterns = [
+                    r'게시글\s*(?:목록|리스트)\s*(?:보여|표시)',
+                    r'(.+?)(?:의)?\s*게시글\s*(?:보여|표시|목록)'
+                ]
+                
+                for i, pattern in enumerate(list_patterns):
+                    match = re.search(pattern, command)
+                    if match:
+                        result["action"] = "list"
+                        result["valid"] = True
+                        
+                        if i == 1 and match.group(1).strip() not in ['모든', '전체']:
+                            result["filter_author"] = match.group(1).strip()
+                        break
+            
+            return result
+            
+        except Exception as e:
+            print(f"❌ 정규표현식 파싱 오류: {e}")
+            return {
+                "action": None,
+                "valid": False,
+                "confidence": 0.0,
+                "explanation": f"파싱 오류: {str(e)}",
+                "method": "regex_fallback",
+                "original_command": command
+            }
 
 # 전역 실제 MCP 서버 인스턴스
 real_mcp_server = RealMCPServer()
