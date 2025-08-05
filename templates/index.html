@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP 게시판</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 MCP 게시판</h1>
+            <p class="subtitle">Model Context Protocol을 활용한 자동 차트 생성 게시판</p>
+        </header>
+        
+        <!-- 게시글 작성 폼 -->
+        <section class="post-form">
+            <h2>📝 게시글 작성</h2>
+            <form id="postForm">
+                <div class="form-group">
+                    <label for="author">작성자명 *</label>
+                    <input type="text" id="author" placeholder="작성자명을 입력하세요" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="title">제목 *</label>
+                    <input type="text" id="title" placeholder="게시글 제목을 입력하세요" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="content">내용</label>
+                    <textarea id="content" placeholder="게시글 내용을 입력하세요" rows="4"></textarea>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="numericValue">숫자값 (차트용)</label>
+                        <input type="number" id="numericValue" placeholder="차트에 표시할 숫자값" step="0.1">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="category">카테고리</label>
+                        <select id="category">
+                            <option value="">카테고리 선택</option>
+                            <option value="매출">매출</option>
+                            <option value="사용자">사용자</option>
+                            <option value="성능">성능</option>
+                            <option value="기타">기타</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <button type="submit" class="btn btn-primary">게시글 작성</button>
+            </form>
+        </section>
+        
+        <!-- MCP 상태 및 API 키 설정 -->
+        <section class="mcp-status" id="mcpStatusSection">
+            <h2>🤖 MCP 상태</h2>
+            <div id="mcpStatus" class="status-display">
+                <p>🔄 MCP 상태를 확인하는 중...</p>
+            </div>
+            
+            <div id="apiKeySection" class="api-key-setup" style="display: none;">
+                <h3>🔑 Anthropic API 키 설정</h3>
+                <div class="api-key-info">
+                    <p><strong>실제 MCP를 사용하려면 API 키가 필요합니다:</strong></p>
+                    <ol>
+                        <li><a href="https://console.anthropic.com/" target="_blank">Anthropic Console</a>에서 계정 생성</li>
+                        <li>API 키 발급 (Credits 구매 필요)</li>
+                        <li>아래에 API 키 입력</li>
+                    </ol>
+                </div>
+                
+                <div class="api-key-input">
+                    <input type="password" id="anthropicApiKey" placeholder="sk-ant-api03-..." size="50">
+                    <button onclick="setApiKey()" class="btn btn-primary">API 키 설정</button>
+                </div>
+                
+                <div class="api-key-note">
+                    <p><small>⚠️ API 키는 브라우저에 저장되지 않으며, 서버 재시작 시 다시 입력해야 합니다.</small></p>
+                </div>
+            </div>
+        </section>
+
+        <!-- MCP 통신 로그 -->
+        <section class="mcp-logs">
+            <div class="logs-header">
+                <h2>📊 MCP 통신 로그</h2>
+                <div class="logs-controls">
+                    <button onclick="loadMcpLogs()" class="btn btn-secondary">새로고침</button>
+                    <button onclick="clearMcpLogs()" class="btn btn-warning">로그 초기화</button>
+                    <label class="auto-refresh-label">
+                        <input type="checkbox" id="autoRefreshLogs" onchange="toggleAutoRefresh()">
+                        자동 새로고침 (5초)
+                    </label>
+                </div>
+            </div>
+            
+            <div class="logs-container" id="mcpLogsContainer">
+                <div class="loading-message">🔄 로그를 불러오는 중...</div>
+            </div>
+        </section>
+
+        <!-- 차트 생성 명령 -->
+        <section class="chart-command">
+            <h2>📊 차트 생성</h2>
+            <div class="command-help">
+                <p><strong>사용 예시:</strong></p>
+                <div class="command-examples">
+                    <div class="example-section">
+                        <h6>📊 단일 작성자 차트</h6>
+                        <ul>
+                            <li>"홍길동의 데이터를 막대차트로 보여줘"</li>
+                            <li>"김철수의 값을 선그래프로 표시해줘"</li>
+                            <li>"이영희의 수치를 원그래프로 만들어줘"</li>
+                        </ul>
+                    </div>
+                    <div class="example-section">
+                        <h6>👥 다중 작성자 차트 (NEW!)</h6>
+                        <ul>
+                            <li>"홍길동과 김철수의 데이터를 원그래프로 보여줘"</li>
+                            <li>"홍길동, 김철수의 값을 막대차트로 비교해줘"</li>
+                            <li>"홍길동 김철수 데이터를 선그래프로 만들어줘"</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="command-input">
+                <input type="text" id="command" placeholder="예: 홍길동의 데이터를 막대차트로 보여줘" size="50">
+                <button onclick="executeCommand()" class="btn btn-chart">차트 생성</button>
+            </div>
+            
+            {% if available_authors %}
+            <div class="available-authors">
+                <p><strong>사용 가능한 작성자:</strong> 
+                    {% for author in available_authors %}
+                        <span class="author-tag" onclick="fillAuthor('{{ author }}')">{{ author }}</span>
+                        {% if not loop.last %}, {% endif %}
+                    {% endfor %}
+                </p>
+            </div>
+            {% endif %}
+        </section>
+        
+        <!-- 결과 메시지 -->
+        <div id="message" class="message"></div>
+        
+        <!-- 차트 표시 영역 -->
+        <section class="chart-container">
+            <h3>📈 생성된 차트</h3>
+            <div class="chart-wrapper">
+                <canvas id="dynamicChart" width="400" height="200"></canvas>
+                <div id="chartPlaceholder" class="chart-placeholder">
+                    차트를 생성하려면 위의 명령어 입력란에 명령을 입력하세요.
+                </div>
+            </div>
+            <div id="chartSummary" class="chart-summary"></div>
+        </section>
+        
+        <!-- 게시글 목록 -->
+        <section class="post-list">
+            <h2>📄 최근 게시글</h2>
+            <div class="posts-header">
+                <button onclick="loadAllPosts()" class="btn btn-secondary">전체 게시글 보기</button>
+                <button onclick="loadPosts()" class="btn btn-secondary">새로고침</button>
+            </div>
+            <div id="posts" class="posts-grid">
+                {% if posts %}
+                    {% for post in posts %}
+                    <div class="post-card" data-author="{{ post.author }}">
+                        <div class="post-header">
+                            <h4>{{ post.title }}</h4>
+                            <span class="post-author">{{ post.author }}</span>
+                        </div>
+                        <div class="post-content">
+                            {% if post.content %}
+                                <p>{{ post.content[:100] }}{% if post.content|length > 100 %}...{% endif %}</p>
+                            {% endif %}
+                            {% if post.numeric_value %}
+                                <div class="numeric-value">
+                                    <span class="value-label">수치값:</span>
+                                    <span class="value">{{ post.numeric_value }}</span>
+                                </div>
+                            {% endif %}
+                        </div>
+                        <div class="post-footer">
+                            {% if post.category %}
+                                <span class="category">{{ post.category }}</span>
+                            {% endif %}
+                            <span class="post-date">{{ post.created_at[:19] if post.created_at else '' }}</span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="no-posts">등록된 게시글이 없습니다.</p>
+                {% endif %}
+            </div>
+        </section>
+        
+        <!-- 도움말 섹션 -->
+        <section class="help-section">
+            <h2>❓ 사용 방법</h2>
+            <div class="help-cards">
+                <div class="help-card">
+                    <h4>1. 게시글 작성</h4>
+                    <p>작성자명, 제목과 함께 차트에 표시할 숫자값을 입력하세요.</p>
+                </div>
+                <div class="help-card">
+                    <h4>2. 차트 생성 명령</h4>
+                    <p>자연어로 "작성자의 데이터를 차트타입으로 보여줘" 형식으로 입력하세요.</p>
+                </div>
+                <div class="help-card">
+                    <h4>3. 지원하는 차트</h4>
+                    <p>막대차트, 선그래프, 원그래프, 도넛차트를 지원합니다.</p>
+                </div>
+            </div>
+        </section>
+    </div>
+    
+    <script>
+        // 전역 변수
+        let currentChart = null;
+        
+        // 페이지 로드 시 초기화
+        document.addEventListener('DOMContentLoaded', function() {
+            loadPosts();
+            checkMcpStatus();
+            loadMcpLogs(); // Load initial logs
+            
+            // 폼 제출 이벤트 리스너
+            document.getElementById('postForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                addPost();
+            });
+            
+            // 엔터 키로 명령 실행
+            document.getElementById('command').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    executeCommand();
+                }
+            });
+        });
+        
+        // 차트 생성 명령 실행
+        async function executeCommand() {
+            const command = document.getElementById('command').value.trim();
+            
+            if (!command) {
+                showMessage('명령어를 입력해주세요.', 'error');
+                return;
+            }
+            
+            showMessage('차트를 생성하고 있습니다...', 'info');
+            hideChartPlaceholder();
+            
+            try {
+                const response = await fetch('/generate-chart', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({command: command})
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // 기존 차트 제거
+                    if (currentChart) {
+                        currentChart.destroy();
+                    }
+                    
+                    // MCP에서 생성된 Chart.js 코드 실행
+                    eval(result.chart_code);
+                    currentChart = window.myChart;
+                    
+                    // 차트 요약 정보 표시
+                    displayChartSummary(result.summary);
+                    
+                    showMessage(result.message, 'success');
+                } else {
+                    showMessage(result.message, 'error');
+                    showChartPlaceholder();
+                }
+                
+            } catch (error) {
+                showMessage('차트 생성 중 오류가 발생했습니다: ' + error.message, 'error');
+                showChartPlaceholder();
+            }
+        }
+        
+        // 게시글 추가
+        async function addPost() {
+            const formData = {
+                author: document.getElementById('author').value.trim(),
+                title: document.getElementById('title').value.trim(),
+                content: document.getElementById('content').value.trim(),
+                numeric_value: parseFloat(document.getElementById('numericValue').value) || null,
+                category: document.getElementById('category').value || null
+            };
+            
+            if (!formData.author || !formData.title) {
+                showMessage('작성자와 제목은 필수입니다.', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/add-post', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formData)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage('게시글이 작성되었습니다.', 'success');
+                    
+                    // 폼 초기화
+                    document.getElementById('postForm').reset();
+                    
+                    // 게시글 목록 새로고침
+                    loadPosts();
+                } else {
+                    showMessage(result.message, 'error');
+                }
+                
+            } catch (error) {
+                showMessage('게시글 작성 중 오류가 발생했습니다: ' + error.message, 'error');
+            }
+        }
+        
+        // 게시글 목록 로드
+        async function loadPosts() {
+            try {
+                const response = await fetch('/posts');
+                const result = await response.json();
+                
+                if (result.success) {
+                    displayPosts(result.posts.slice(0, 10)); // 최근 10개만 표시
+                } else {
+                    console.error('게시글 로드 실패:', result.message);
+                }
+            } catch (error) {
+                console.error('게시글 로드 중 오류:', error);
+            }
+        }
+        
+        // 전체 게시글 로드
+        async function loadAllPosts() {
+            try {
+                const response = await fetch('/posts');
+                const result = await response.json();
+                
+                if (result.success) {
+                    displayPosts(result.posts);
+                }
+            } catch (error) {
+                console.error('전체 게시글 로드 중 오류:', error);
+            }
+        }
+        
+        // 게시글 표시
+        function displayPosts(posts) {
+            const postsContainer = document.getElementById('posts');
+            
+            if (!posts || posts.length === 0) {
+                postsContainer.innerHTML = '<p class="no-posts">등록된 게시글이 없습니다.</p>';
+                return;
+            }
+            
+            const postsHTML = posts.map(post => `
+                <div class="post-card" data-author="${post.author}">
+                    <div class="post-header">
+                        <h4>${escapeHtml(post.title)}</h4>
+                        <span class="post-author">${escapeHtml(post.author)}</span>
+                    </div>
+                    <div class="post-content">
+                        ${post.content ? `<p>${escapeHtml(post.content.substring(0, 100))}${post.content.length > 100 ? '...' : ''}</p>` : ''}
+                        ${post.numeric_value ? `
+                            <div class="numeric-value">
+                                <span class="value-label">수치값:</span>
+                                <span class="value">${post.numeric_value}</span>
+                            </div>
+                        ` : ''}
+                    </div>
+                    <div class="post-footer">
+                        ${post.category ? `<span class="category">${escapeHtml(post.category)}</span>` : ''}
+                        <span class="post-date">${post.created_at ? post.created_at.substring(0, 19) : ''}</span>
+                    </div>
+                </div>
+            `).join('');
+            
+            postsContainer.innerHTML = postsHTML;
+        }
+        
+        // 차트 요약 정보 표시
+        function displayChartSummary(summary) {
+            if (!summary) return;
+            
+            let summaryHTML = '';
+            
+            // 다중 작성자 차트인지 확인
+            if (summary.authors && summary.authors.length > 1) {
+                // 다중 작성자 요약
+                summaryHTML = `
+                    <div class="summary-info">
+                        <h4>다중 작성자 데이터 요약</h4>
+                        <div class="multi-author-summary">
+                            <div class="overall-stats">
+                                <h5>전체 통계</h5>
+                                <div class="summary-stats">
+                                    <span class="stat">총 작성자: ${summary.total_authors}명</span>
+                                    <span class="stat">총 게시글: ${summary.total_posts}개</span>
+                                    <span class="stat">전체 합계: ${summary.total_value}</span>
+                                    <span class="stat">전체 평균: ${summary.average_value}</span>
+                                </div>
+                            </div>
+                            <div class="author-breakdown">
+                                <h5>작성자별 상세</h5>
+                                ${Object.entries(summary.author_breakdown || {}).map(([author, stats]) => `
+                                    <div class="author-stats">
+                                        <strong>${escapeHtml(author)}</strong>
+                                        <div class="summary-stats">
+                                            <span class="stat">게시글: ${stats.posts}개</span>
+                                            <span class="stat">총합: ${stats.total_value}</span>
+                                            <span class="stat">평균: ${stats.average_value}</span>
+                                            <span class="stat">최대: ${stats.max_value}</span>
+                                            <span class="stat">최소: ${stats.min_value}</span>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                // 단일 작성자 요약 (기존 방식)
+                const authorName = summary.author || (summary.authors && summary.authors[0]) || '작성자';
+                summaryHTML = `
+                    <div class="summary-info">
+                        <h4>${escapeHtml(authorName)}님의 데이터 요약</h4>
+                        <div class="summary-stats">
+                            <span class="stat">총 게시글: ${summary.total_posts}개</span>
+                            <span class="stat">평균값: ${summary.average_value}</span>
+                            <span class="stat">최대값: ${summary.max_value}</span>
+                            <span class="stat">최소값: ${summary.min_value}</span>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            document.getElementById('chartSummary').innerHTML = summaryHTML;
+        }
+        
+        // 작성자명 자동 입력
+        function fillAuthor(authorName) {
+            const commandInput = document.getElementById('command');
+            commandInput.value = `${authorName}의 데이터를 막대차트로 보여줘`;
+            commandInput.focus();
+        }
+        
+        // 메시지 표시
+        function showMessage(message, type) {
+            const messageDiv = document.getElementById('message');
+            messageDiv.textContent = message;
+            messageDiv.className = 'message ' + type;
+            messageDiv.style.display = 'block';
+            
+            // 3초 후 메시지 자동 제거
+            setTimeout(() => {
+                messageDiv.style.display = 'none';
+                messageDiv.textContent = '';
+                messageDiv.className = 'message';
+            }, 3000);
+        }
+        
+        // 차트 플레이스홀더 관리
+        function hideChartPlaceholder() {
+            const placeholder = document.getElementById('chartPlaceholder');
+            const canvas = document.getElementById('dynamicChart');
+            placeholder.style.display = 'none';
+            canvas.style.display = 'block';
+        }
+        
+        function showChartPlaceholder() {
+            const placeholder = document.getElementById('chartPlaceholder');
+            const canvas = document.getElementById('dynamicChart');
+            placeholder.style.display = 'flex';
+            canvas.style.display = 'none';
+        }
+        
+        // MCP 상태 확인
+        async function checkMcpStatus() {
+            try {
+                const response = await fetch('/mcp-status');
+                const result = await response.json();
+                
+                if (result.success) {
+                    displayMcpStatus(result.mcp_status);
+                } else {
+                    displayMcpStatus({
+                        mode: "오류",
+                        api_key_configured: false,
+                        mcp_available: false
+                    });
+                }
+            } catch (error) {
+                console.error('MCP 상태 확인 중 오류:', error);
+                displayMcpStatus({
+                    mode: "연결 오류",
+                    api_key_configured: false,
+                    mcp_available: false
+                });
+            }
+        }
+        
+        // MCP 상태 표시
+        function displayMcpStatus(status) {
+            const statusDiv = document.getElementById('mcpStatus');
+            const apiKeySection = document.getElementById('apiKeySection');
+            
+            let statusHTML = `
+                <div class="status-item">
+                    <span class="status-label">모드:</span>
+                    <span class="status-value ${status.mcp_available ? 'status-success' : 'status-warning'}">${status.mode}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">API 키:</span>
+                    <span class="status-value ${status.api_key_configured ? 'status-success' : 'status-error'}">
+                        ${status.api_key_configured ? '✅ 설정됨' : '❌ 미설정'}
+                    </span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">MCP 사용 가능:</span>
+                    <span class="status-value ${status.mcp_available ? 'status-success' : 'status-error'}">
+                        ${status.mcp_available ? '✅ 예' : '❌ 아니오'}
+                    </span>
+                </div>
+            `;
+            
+            if (status.model) {
+                statusHTML += `
+                    <div class="status-item">
+                        <span class="status-label">모델:</span>
+                        <span class="status-value">${status.model}</span>
+                    </div>
+                `;
+            }
+            
+            if (status.api_test) {
+                statusHTML += `
+                    <div class="status-item">
+                        <span class="status-label">API 테스트:</span>
+                        <span class="status-value">${status.api_test}</span>
+                    </div>
+                `;
+            }
+            
+            statusDiv.innerHTML = statusHTML;
+            
+            // API 키가 설정되지 않은 경우 설정 섹션 표시
+            if (!status.api_key_configured) {
+                apiKeySection.style.display = 'block';
+            } else {
+                apiKeySection.style.display = 'none';
+            }
+        }
+        
+        // API 키 설정
+        async function setApiKey() {
+            const apiKey = document.getElementById('anthropicApiKey').value.trim();
+            
+            if (!apiKey) {
+                showMessage('API 키를 입력해주세요.', 'error');
+                return;
+            }
+            
+            if (!apiKey.startsWith('sk-ant-')) {
+                showMessage('올바른 Anthropic API 키 형식이 아닙니다. (sk-ant-로 시작해야 합니다)', 'error');
+                return;
+            }
+            
+            showMessage('API 키를 설정하는 중...', 'info');
+            
+            try {
+                const response = await fetch('/set-api-key', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({api_key: apiKey})
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage('✅ API 키가 설정되었습니다! 이제 실제 MCP를 사용할 수 있습니다.', 'success');
+                    
+                    // 입력 필드 초기화
+                    document.getElementById('anthropicApiKey').value = '';
+                    
+                    // MCP 상태 새로고침
+                    setTimeout(() => {
+                        checkMcpStatus();
+                    }, 1000);
+                } else {
+                    showMessage('❌ ' + result.message, 'error');
+                }
+                
+            } catch (error) {
+                showMessage('API 키 설정 중 오류가 발생했습니다: ' + error.message, 'error');
+            }
+        }
+        
+        // HTML 이스케이프
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // === MCP 로그 관련 함수들 ===
+        
+        let autoRefreshInterval = null;
+        
+        // MCP 로그 불러오기
+        async function loadMcpLogs() {
+            try {
+                const response = await fetch('/mcp-logs?limit=50');
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayMcpLogs(data.logs);
+                } else {
+                    showMessage('로그 불러오기 실패: ' + data.message, 'error');
+                }
+            } catch (error) {
+                console.error('로그 불러오기 오류:', error);
+                showMessage('로그 불러오기 중 오류가 발생했습니다.', 'error');
+            }
+        }
+        
+        // MCP 로그 표시
+        function displayMcpLogs(logs) {
+            const container = document.getElementById('mcpLogsContainer');
+            
+            if (!logs || logs.length === 0) {
+                container.innerHTML = '<div class="no-logs">📭 아직 로그가 없습니다.</div>';
+                return;
+            }
+            
+            const logsHTML = logs.map(log => {
+                const levelClass = `log-${log.level}`;
+                const icon = getLogIcon(log.level);
+                const duration = log.duration_ms ? ` (${log.duration_ms.toFixed(1)}ms)` : '';
+                
+                let detailsHTML = '';
+                if (log.details) {
+                    if (log.details.command) {
+                        detailsHTML += `<div class="log-detail">📝 명령: ${escapeHtml(log.details.command)}</div>`;
+                    }
+                    if (log.details.author_names) {
+                        detailsHTML += `<div class="log-detail">👥 작성자: ${log.details.author_names.join(', ')}</div>`;
+                    }
+                    if (log.details.chart_type) {
+                        detailsHTML += `<div class="log-detail">📊 차트: ${log.details.chart_type}</div>`;
+                    }
+                    if (log.details.method) {
+                        detailsHTML += `<div class="log-detail">🔧 방식: ${log.details.method}</div>`;
+                    }
+                    if (log.details.error) {
+                        detailsHTML += `<div class="log-detail log-error">❌ 오류: ${escapeHtml(log.details.error)}</div>`;
+                    }
+                }
+                
+                return `
+                    <div class="log-entry ${levelClass}">
+                        <div class="log-header">
+                            <span class="log-icon">${icon}</span>
+                            <span class="log-timestamp">${log.timestamp}</span>
+                            <span class="log-category">${log.category.toUpperCase()}</span>
+                            <span class="log-message">${escapeHtml(log.message)}${duration}</span>
+                        </div>
+                        ${detailsHTML ? `<div class="log-details">${detailsHTML}</div>` : ''}
+                    </div>
+                `;
+            }).join('');
+            
+            container.innerHTML = logsHTML;
+            
+            // 최신 로그로 스크롤
+            container.scrollTop = container.scrollHeight;
+        }
+        
+        // 로그 레벨에 따른 아이콘 반환
+        function getLogIcon(level) {
+            const icons = {
+                'info': 'ℹ️',
+                'success': '✅',
+                'warning': '⚠️',
+                'error': '❌',
+                'debug': '🔍'
+            };
+            return icons[level] || '📝';
+        }
+        
+        // MCP 로그 초기화
+        async function clearMcpLogs() {
+            if (!confirm('정말 모든 로그를 삭제하시겠습니까?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/clear-mcp-logs', { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage('로그가 초기화되었습니다.', 'success');
+                    await loadMcpLogs(); // 새로고침
+                } else {
+                    showMessage('로그 초기화 실패: ' + data.message, 'error');
+                }
+            } catch (error) {
+                console.error('로그 초기화 오류:', error);
+                showMessage('로그 초기화 중 오류가 발생했습니다.', 'error');
+            }
+        }
+        
+        // 자동 새로고침 토글
+        function toggleAutoRefresh() {
+            const checkbox = document.getElementById('autoRefreshLogs');
+            
+            if (checkbox.checked) {
+                // 자동 새로고침 시작 (5초마다)
+                autoRefreshInterval = setInterval(loadMcpLogs, 5000);
+                showMessage('자동 새로고침이 시작되었습니다. (5초마다)', 'info');
+            } else {
+                // 자동 새로고침 중지
+                if (autoRefreshInterval) {
+                    clearInterval(autoRefreshInterval);
+                    autoRefreshInterval = null;
+                }
+                showMessage('자동 새로고침이 중지되었습니다.', 'info');
+            }
+        }
+    </script>
+</body>
+</html>
