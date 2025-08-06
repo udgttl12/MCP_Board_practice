@@ -33,15 +33,19 @@ def run_server():
     print("-" * 50)
     
     try:
-        # app.py 실행
-        subprocess.run([sys.executable, "app.py"], check=True)
+        # uvicorn으로 직접 FastAPI 앱 실행
+        import uvicorn
+        uvicorn.run(
+            "app:app",  # app.py의 app 변수를 import string으로 지정
+            host="0.0.0.0",
+            port=8000,
+            reload=False,  # subprocess 환경에서는 reload 비활성화
+            log_level="info"
+        )
     except KeyboardInterrupt:
         print("\n🛑 서버가 중지되었습니다.")
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         print(f"❌ 서버 실행 중 오류가 발생했습니다: {e}")
-        return False
-    except FileNotFoundError:
-        print("❌ app.py 파일을 찾을 수 없습니다.")
         return False
     
     return True
