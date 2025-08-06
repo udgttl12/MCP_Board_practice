@@ -4,11 +4,15 @@ MCP 게시판 설정 파일
 
 import os
 from typing import Optional
+from dotenv import load_dotenv
 
 class Config:
     """애플리케이션 설정 클래스"""
     
     def __init__(self):
+        # .env 파일 로드 (존재하는 경우)
+        load_dotenv()
+        
         # Anthropic API 키 (환경변수 또는 직접 설정)
         self.ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
         
