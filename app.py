@@ -1,50 +1,103 @@
 """
-FastAPI 메인 애플리케이션
+MCP 게시판 FastAPI 메인 애플리케이션
+
+이 모듈은 MCP(Model Context Protocol)를 활용한 게시판의 웹 서버 역할을 담당합니다.
+주요 기능:
+- RESTful API 서버 운영
+- 자연어 명령을 통한 차트 생성
+- 게시글 CRUD 작업
+- MCP를 통한 AI 기반 데이터 관리
+- 웹 인터페이스 제공
+
+아키텍처:
+Frontend (HTML/JS) <-> FastAPI Backend <-> MCP Server <-> Anthropic AI
+                                     <-> Database (SQLite)
 """
 
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-import uvicorn
-import asyncio
+# 표준 라이브러리 임포트
+import uvicorn  # ASGI 서버
+import asyncio  # 비동기 처리
+
+# FastAPI 관련 임포트
+from fastapi import FastAPI, Request, HTTPException  # 웹 프레임워크 코어
+from fastapi.templating import Jinja2Templates  # HTML 템플릿 엔진
+from fastapi.staticfiles import StaticFiles  # 정적 파일 서빙
+from fastapi.responses import JSONResponse  # JSON 응답 처리
+from pydantic import BaseModel  # 데이터 검증 모델
 
 # 로컬 모듈 임포트
-from mcp_server_real import generate_author_chart, parse_chart_command, get_mcp_status
-from mcp_server import get_available_authors, get_chart_types  # 기존 함수들
-from database import db_manager, init_sample_data
-from config import config, setup_api_key
-from mcp_logger import mcp_logger, log_mcp_error
+from mcp_server_real import generate_author_chart, parse_chart_command, get_mcp_status  # 실제 MCP 서버
+from mcp_server import get_available_authors, get_chart_types  # 시뮬레이션 MCP 서버
+from database import db_manager, init_sample_data  # 데이터베이스 관리
+from config import config, setup_api_key  # 설정 관리
+from mcp_logger import mcp_logger, log_mcp_error  # 로깅 시스템
 
-# 요청 모델 정의
+# ==========================================
+# API 요청/응답 데이터 모델 정의
+# ==========================================
+
 class ChartRequest(BaseModel):
-    command: str
+    """
+    차트 생성 요청 모델
+    
+    사용자가 자연어로 입력한 차트 생성 명령을 받는 모델
+    예: "홍길동의 데이터를 막대차트로 보여줘"
+    """
+    command: str  # 자연어 차트 생성 명령
 
 class PostUpdate(BaseModel):
-    title: str
-    content: str
-    author: str
+    """
+    게시글 수정 요청 모델
+    
+    기존 게시글의 제목, 내용, 작성자를 수정할 때 사용
+    """
+    title: str    # 수정할 제목
+    content: str  # 수정할 내용
+    author: str   # 수정할 작성자명
 
 class PostManagementRequest(BaseModel):
-    command: str
+    """
+    MCP를 통한 게시글 관리 요청 모델
+    
+    자연어 명령으로 게시글을 생성/수정/삭제할 때 사용
+    예: "윤동규로 제목은 매출, 내용도 매출, 매출 10으로 글 써줘"
+    """
+    command: str  # 자연어 게시글 관리 명령
 
 class PostRequest(BaseModel):
-    author: str
-    title: str
-    content: str = ""
-    numeric_value: float = None
-    category: str = None
+    """
+    게시글 생성 요청 모델
+    
+    새로운 게시글을 생성할 때 사용하는 표준 모델
+    numeric_value는 차트 생성용 숫자 데이터로 활용됨
+    """
+    author: str                    # 작성자명 (필수)
+    title: str                     # 게시글 제목 (필수)
+    content: str = ""              # 게시글 내용 (선택)
+    numeric_value: float = None    # 차트용 숫자 데이터 (선택)
+    category: str = None           # 카테고리 분류 (선택)
 
-# 시작 시 데이터베이스 초기화
+# ==========================================
+# 애플리케이션 생명주기 관리
+# ==========================================
+
 from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 시작 시 실행
+    """
+    FastAPI 애플리케이션 생명주기 관리자
+    
+    서버 시작과 종료 시 필요한 초기화/정리 작업을 담당
+    - 시작 시: API 키 확인, 데이터베이스 초기화, MCP 상태 확인
+    - 종료 시: 로그 기록 및 정리 작업
+    """
+    
+    # ========== 서버 시작 시 실행 ==========
     print("🚀 MCP 게시판 애플리케이션을 시작합니다...")
     
-    # API 키 설정 확인
+    # 1. Anthropic API 키 설정 상태 확인
+    # API 키 유무에 따라 실제 MCP 모드 또는 시뮬레이션 모드로 분기
     if config.is_api_key_configured():
         print(f"✅ Anthropic API 키가 설정되어 있습니다.")
         print(f"🤖 실제 MCP 모드로 실행됩니다.")
@@ -55,63 +108,120 @@ async def lifespan(app: FastAPI):
         print(f"💡 실제 MCP를 사용하려면 API 키를 설정하세요.")
         await mcp_logger.log_system_event("서버 시작 - 시뮬레이션 모드")
     
-    # 데이터베이스 초기화
+    # 2. 데이터베이스 테이블 생성 및 샘플 데이터 초기화
+    # 첫 실행 시 필요한 테이블과 기본 데이터를 생성
     init_sample_data()
     print("📊 데이터베이스 초기화가 완료되었습니다.")
     
-    # MCP 상태 확인
+    # 3. MCP 서버 상태 확인 및 로그 기록
+    # 실제 MCP/시뮬레이션 모드 상태를 확인하고 로그에 기록
     mcp_status = await get_mcp_status()
     print(f"🔍 MCP 상태: {mcp_status['mode']}")
     await mcp_logger.log_system_event("MCP 상태 확인 완료", mcp_status)
     
+    # yield로 애플리케이션 실행 단계로 제어 전달
     yield
     
-    # 종료 시 실행
+    # ========== 서버 종료 시 실행 ==========
     print("🛑 서버가 종료됩니다.")
     await mcp_logger.log_system_event("서버 종료")
 
-# FastAPI 앱 초기화
+# ==========================================
+# FastAPI 애플리케이션 초기화
+# ==========================================
+
 app = FastAPI(
     title="MCP 게시판",
     description="MCP를 활용한 게시판에서 차트 자동 생성 기능",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan  # 앞서 정의한 생명주기 관리자 연결
 )
 
+# ==========================================
 # 정적 파일과 템플릿 설정
+# ==========================================
+
+# 정적 파일 서빙 설정 (CSS, JS, 이미지 등)
+# /static 경로로 접근하는 파일들을 ./static 디렉토리에서 제공
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Jinja2 템플릿 엔진 설정
+# HTML 템플릿 파일들을 ./templates 디렉토리에서 로드
 templates = Jinja2Templates(directory="templates")
 
-# 라우트 정의
+# ==========================================
+# 웹페이지 라우트 정의
+# ==========================================
+
 @app.get("/")
 async def main_page(request: Request):
-    """메인 게시판 페이지"""
+    """
+    메인 게시판 페이지 렌더링
+    
+    게시판의 메인 화면을 제공하며, 다음 기능들을 포함:
+    - 최근 게시글 목록 표시 (최대 10개)
+    - 차트 생성 가능한 작성자 목록 제공
+    - 차트 생성 인터페이스
+    - 게시글 작성 인터페이스
+    - MCP 상태 모니터링
+    
+    Returns:
+        TemplateResponse: index.html 템플릿과 데이터를 렌더링한 HTML 응답
+    """
     try:
-        # 최근 게시글 목록을 가져와서 템플릿에 전달
-        posts = db_manager.get_all_posts()[:10]  # 최근 10개만
+        # 1. 최근 게시글 목록 조회 (성능을 위해 최대 10개로 제한)
+        posts = db_manager.get_all_posts()[:10]
+        
+        # 2. 차트 생성 가능한 작성자 목록 조회
+        # numeric_value가 있는 게시글의 작성자들만 필터링
         available_authors = db_manager.get_authors_with_numeric_data()
         
+        # 3. 템플릿에 데이터 전달하여 HTML 렌더링
         return templates.TemplateResponse(
             "index.html", 
             {
-                "request": request,
-                "posts": posts,
-                "available_authors": available_authors
+                "request": request,                  # FastAPI Request 객체 (필수)
+                "posts": posts,                      # 게시글 목록
+                "available_authors": available_authors  # 차트 생성 가능한 작성자 목록
             }
         )
     except Exception as e:
+        # 4. 에러 발생 시 빈 데이터로 페이지 렌더링
         print(f"메인 페이지 로딩 중 오류: {e}")
         return templates.TemplateResponse(
             "index.html", 
             {"request": request, "posts": [], "available_authors": []}
         )
 
+# ==========================================
+# 차트 생성 관련 API 엔드포인트
+# ==========================================
+
 @app.post("/generate-chart")
 async def create_chart(request: ChartRequest):
-    """차트 생성 API 엔드포인트"""
+    """
+    자연어 명령을 통한 차트 생성 API
+    
+    이 엔드포인트는 MCP 게시판의 핵심 기능으로, 사용자가 입력한 자연어 명령을
+    AI 또는 정규식을 통해 파싱하여 Chart.js 코드를 동적으로 생성합니다.
+    
+    지원 기능:
+    - 단일 작성자 차트 생성: "홍길동의 데이터를 막대차트로 보여줘"
+    - 다중 작성자 차트 생성: "홍길동과 김철수의 데이터를 차트로 보여줘"
+    - 모든 작성자 차트 생성: "모든 사람들의 데이터를 차트로 보여줘"
+    - 차트 타입: 막대, 선, 원, 도넛 차트 지원
+    
+    Args:
+        request (ChartRequest): 자연어 차트 생성 명령을 포함한 요청 객체
+        
+    Returns:
+        JSONResponse: 생성된 Chart.js 코드와 성공 여부를 포함한 JSON 응답
+    """
     try:
+        # 1. 입력 명령어 전처리
         command = request.command.strip()
         
+        # 2. 빈 명령어 검증
         if not command:
             return JSONResponse(
                 status_code=400,
@@ -121,11 +231,13 @@ async def create_chart(request: ChartRequest):
                 }
             )
         
-        # 명령어 파싱
+        # 3. MCP를 통한 자연어 명령어 파싱
+        # AI 또는 정규식을 사용하여 작성자명, 차트타입 등을 추출
         parsed = await parse_chart_command(command)
         
+        # 4. 파싱 실패 시 에러 응답 및 도움말 제공
         if not parsed['valid']:
-            # 사용 가능한 작성자 목록 제공
+            # 사용 가능한 작성자 목록을 조회하여 사용자에게 가이드 제공
             authors_result = await get_available_authors()
             authors_list = authors_result.get('authors', [])
             authors_str = ", ".join(authors_list) if authors_list else "없음"

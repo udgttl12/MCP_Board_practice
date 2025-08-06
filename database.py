@@ -1,29 +1,78 @@
 """
-데이터베이스 모델 및 연결 설정
+MCP 게시판 데이터베이스 관리 모듈
+
+이 모듈은 SQLAlchemy ORM을 사용하여 게시글 데이터를 관리합니다.
+주요 기능:
+- 게시글 모델 정의 (Post)
+- 데이터베이스 연결 및 세션 관리
+- CRUD 작업 (Create, Read, Update, Delete)
+- 차트 생성용 숫자 데이터 조회
+- 작성자별 데이터 필터링
+
+데이터베이스 스키마:
+- posts 테이블: 게시글 정보 저장
+  - id: 고유 식별자
+  - author: 작성자명
+  - title: 게시글 제목
+  - content: 게시글 내용
+  - numeric_value: 차트 생성용 숫자 데이터
+  - category: 카테고리 분류
+  - created_at: 생성 시간
 """
 
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from datetime import datetime
-import sqlite3
+# 데이터베이스 ORM 관련 임포트
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text  # SQLAlchemy 핵심 타입
+from sqlalchemy.ext.declarative import declarative_base  # 모델 베이스 클래스
+from sqlalchemy.orm import sessionmaker  # 세션 관리
 
+# 표준 라이브러리
+from datetime import datetime  # 시간 처리
+import sqlite3                # SQLite 직접 접근용 (필요시)
+
+# ==========================================
+# 데이터베이스 모델 정의
+# ==========================================
+
+# SQLAlchemy 모델의 기본 클래스
 Base = declarative_base()
 
 class Post(Base):
-    """게시글 모델"""
+    """
+    게시글 데이터 모델
+    
+    MCP 게시판의 핵심 데이터 구조로, 일반적인 게시글 정보와 함께
+    차트 생성을 위한 숫자 데이터를 포함합니다.
+    
+    특징:
+    - numeric_value: 차트 시각화용 숫자 데이터 (선택적)
+    - category: 게시글 분류용 카테고리 (선택적)
+    - created_at: 자동 생성 시간 기록
+    """
     __tablename__ = "posts"
     
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    author = Column(String(50), nullable=False)
-    title = Column(String(200), nullable=False)
-    content = Column(Text)
-    numeric_value = Column(Float)
-    category = Column(String(50))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    # 기본 필드들
+    id = Column(Integer, primary_key=True, autoincrement=True)  # 고유 식별자 (자동증가)
+    author = Column(String(50), nullable=False)                # 작성자명 (필수, 최대 50자)
+    title = Column(String(200), nullable=False)                # 게시글 제목 (필수, 최대 200자)
+    content = Column(Text)                                     # 게시글 내용 (선택적, 길이 제한 없음)
+    
+    # MCP 특화 필드들
+    numeric_value = Column(Float)                              # 차트 생성용 숫자 데이터 (선택적)
+    category = Column(String(50))                              # 카테고리 분류 (선택적, 최대 50자)
+    
+    # 메타데이터
+    created_at = Column(DateTime, default=datetime.utcnow)     # 생성 시간 (자동 설정)
 
     def to_dict(self):
-        """모델을 딕셔너리로 변환"""
+        """
+        모델 객체를 딕셔너리로 변환
+        
+        SQLAlchemy 모델 객체를 JSON 직렬화 가능한 딕셔너리로 변환합니다.
+        API 응답이나 템플릿 렌더링에 사용됩니다.
+        
+        Returns:
+            dict: 게시글 정보를 담은 딕셔너리
+        """
         return {
             'id': self.id,
             'author': self.author,
@@ -34,26 +83,91 @@ class Post(Base):
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
+# ==========================================
+# 데이터베이스 관리 클래스
+# ==========================================
+
 class DatabaseManager:
-    """데이터베이스 관리 클래스"""
+    """
+    데이터베이스 연결 및 작업 관리 클래스
+    
+    SQLAlchemy ORM을 사용하여 데이터베이스 작업을 추상화하고,
+    게시글 관련 CRUD 작업을 제공합니다.
+    
+    주요 기능:
+    - 데이터베이스 연결 관리
+    - 세션 생성 및 관리
+    - 게시글 CRUD 작업
+    - 차트용 데이터 조회
+    - 트랜잭션 관리 (자동 커밋/롤백)
+    
+    사용 패턴:
+    1. 세션 생성
+    2. 데이터베이스 작업 수행
+    3. 성공시 커밋, 실패시 롤백
+    4. 세션 종료 (finally 블록에서)
+    """
     
     def __init__(self, db_url="sqlite:///board.db"):
+        """
+        데이터베이스 매니저 초기화
+        
+        Args:
+            db_url (str): 데이터베이스 연결 URL (기본값: SQLite 파일)
+        """
+        # SQLAlchemy 엔진 생성 (데이터베이스 연결 풀 관리)
         self.engine = create_engine(db_url)
+        
+        # 세션 팩토리 생성 (각 요청마다 새로운 세션 생성용)
         self.SessionLocal = sessionmaker(bind=self.engine)
+        
+        # 테이블 생성 (존재하지 않는 경우)
         self.create_tables()
     
     def create_tables(self):
-        """테이블 생성"""
+        """
+        데이터베이스 테이블 생성
+        
+        SQLAlchemy 메타데이터를 기반으로 모든 테이블을 생성합니다.
+        이미 존재하는 테이블은 무시됩니다.
+        """
         Base.metadata.create_all(bind=self.engine)
     
     def get_session(self):
-        """데이터베이스 세션 반환"""
+        """
+        새로운 데이터베이스 세션 반환
+        
+        각 데이터베이스 작업마다 새로운 세션을 생성합니다.
+        세션은 사용 후 반드시 close()해야 합니다.
+        
+        Returns:
+            Session: SQLAlchemy 세션 객체
+        """
         return self.SessionLocal()
     
     def add_post(self, author, title, content, numeric_value=None, category=None):
-        """게시글 추가"""
+        """
+        새로운 게시글 추가
+        
+        게시글 정보를 받아 데이터베이스에 저장합니다.
+        numeric_value는 차트 생성용 숫자 데이터로 사용됩니다.
+        
+        Args:
+            author (str): 작성자명 (필수)
+            title (str): 게시글 제목 (필수)
+            content (str): 게시글 내용 (선택)
+            numeric_value (float): 차트용 숫자 데이터 (선택)
+            category (str): 카테고리 (선택)
+            
+        Returns:
+            dict: 생성된 게시글 정보 딕셔너리
+            
+        Raises:
+            Exception: 데이터베이스 작업 실패 시
+        """
         session = self.get_session()
         try:
+            # 새로운 Post 객체 생성
             post = Post(
                 author=author,
                 title=title,
@@ -61,13 +175,20 @@ class DatabaseManager:
                 numeric_value=numeric_value,
                 category=category
             )
+            
+            # 세션에 추가하고 커밋
             session.add(post)
             session.commit()
+            
+            # 딕셔너리 형태로 반환
             return post.to_dict()
+            
         except Exception as e:
+            # 오류 발생 시 롤백
             session.rollback()
             raise e
         finally:
+            # 항상 세션 종료
             session.close()
     
     def get_posts_by_author(self, author_name):

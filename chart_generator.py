@@ -1,43 +1,94 @@
 """
-차트 생성 로직 구현
+Chart.js 동적 코드 생성 모듈
+
+이 모듈은 데이터베이스의 게시글 데이터를 기반으로
+Chart.js JavaScript 코드를 동적으로 생성합니다.
+
+주요 기능:
+- 다양한 차트 타입 지원 (막대, 선, 원, 도넛)
+- 데이터 검증 및 전처리
+- 차트 스타일링 및 설정 관리
+- 반응형 차트 옵션 적용
+- JavaScript 코드 문자열 생성
+
+지원하는 차트 타입:
+- bar: 막대차트 (기본값)
+- line: 선그래프
+- pie: 원그래프
+- doughnut: 도넛차트
 """
 
-import json
-from database import db_manager
+import json                # JSON 직렬화 (JavaScript 호환)
+from database import db_manager  # 데이터베이스 접근
+
+# ==========================================
+# 차트 생성 엔진 클래스
+# ==========================================
 
 class ChartGenerator:
-    """Chart.js 코드를 동적으로 생성하는 클래스"""
+    """
+    Chart.js 코드를 동적으로 생성하는 핵심 클래스
+    
+    이 클래스는 MCP 게시판의 차트 기능을 담당하며,
+    데이터베이스의 숫자 데이터를 시각적 차트로 변환합니다.
+    
+    작동 원리:
+    1. 게시글 데이터에서 제목과 숫자값 추출
+    2. 차트 타입에 맞는 설정 적용
+    3. Chart.js 호환 JavaScript 코드 생성
+    4. 브라우저에서 실행 가능한 코드 반환
+    """
     
     def __init__(self):
+        """
+        차트 생성기 초기화
+        
+        데이터베이스 매니저와 연결하여 게시글 데이터에 접근할 수 있도록 설정
+        """
+        # 데이터베이스 접근을 위한 매니저 연결
         self.db = db_manager
     
     def create_chart_js_code(self, author_data, chart_type="bar"):
         """
-        작성자 데이터를 받아서 Chart.js 코드를 동적으로 생성
+        작성자 데이터를 Chart.js 코드로 변환
+        
+        게시글 데이터를 분석하여 Chart.js 라이브러리로 렌더링 가능한
+        JavaScript 코드를 동적으로 생성합니다.
+        
+        데이터 처리 과정:
+        1. 게시글 제목을 차트 라벨로 사용
+        2. numeric_value를 차트 데이터로 사용
+        3. 차트 타입별 스타일 적용
+        4. 반응형 옵션 설정
         
         Args:
             author_data (list): 작성자의 게시글 데이터 리스트
-            chart_type (str): 차트 타입 (bar, line, pie 등)
+                              각 항목은 {'title': str, 'numeric_value': float} 형태
+            chart_type (str): 차트 타입 ('bar', 'line', 'pie', 'doughnut')
         
         Returns:
-            str: Chart.js 코드 문자열
+            str: 브라우저에서 실행 가능한 Chart.js JavaScript 코드 문자열
         """
+        # 1. 입력 데이터 검증
         if not author_data:
             return ""
         
-        # 라벨과 값 추출
+        # 2. 차트 라벨 추출 (게시글 제목들)
         labels = [post['title'] for post in author_data]
+        
+        # 3. 차트 데이터 추출 (숫자값들만 필터링)
         values = [post['numeric_value'] for post in author_data if post['numeric_value'] is not None]
         
-        # 데이터가 없으면 빈 차트
+        # 4. 데이터가 없으면 0으로 채움 (빈 차트 방지)
         if not values:
             values = [0] * len(labels)
         
-        # JSON 형태로 변환 (JavaScript에서 사용하기 위해)
+        # 5. JavaScript 호환 JSON 형태로 변환
+        # ensure_ascii=False: 한글 제목 지원
         labels_json = json.dumps(labels, ensure_ascii=False)
         values_json = json.dumps(values)
         
-        # 차트 타입별 설정
+        # 6. 차트 타입별 스타일 설정 로드
         chart_config = self._get_chart_config(chart_type)
         
         chart_code = f"""

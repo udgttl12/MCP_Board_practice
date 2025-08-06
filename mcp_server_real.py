@@ -1,32 +1,90 @@
 """
-실제 Anthropic API를 사용하는 MCP 서버
+MCP 실제 서버 구현 모듈
+
+이 모듈은 Anthropic Claude API를 사용하여 실제 AI 기반 MCP 서비스를 제공합니다.
+주요 기능:
+- 자연어 명령 파싱 (AI 기반)
+- Chart.js 코드 자동 생성 (AI 기반)
+- 게시글 관리 명령 처리 (AI 기반)
+- 다중 작성자 차트 생성
+- 실시간 성능 모니터링 및 로깅
+
+MCP (Model Context Protocol) 개념:
+- 사용자의 자연어 입력을 AI가 이해하여 구조화된 데이터로 변환
+- 변환된 데이터를 기반으로 동적 코드 생성
+- 생성된 코드를 실행하여 최종 결과물 제공
+
+아키텍처:
+사용자 입력 -> AI 파싱 -> 데이터 조회 -> 코드 생성 -> 결과 반환
 """
 
-import json
-import re
-import asyncio
-import time
+# 표준 라이브러리 임포트
+import json      # JSON 데이터 처리
+import re        # 정규식 패턴 매칭 (폴백 파싱용)
+import asyncio   # 비동기 처리
+import time      # 성능 측정용
+
+# 타입 힌팅
 from typing import Dict, Any, Optional, List
-from anthropic import AsyncAnthropic
-from config import config
-from chart_generator import chart_generator
-from mcp_logger import mcp_logger, log_mcp_warning, log_mcp_error
+
+# 외부 라이브러리
+from anthropic import AsyncAnthropic  # Anthropic Claude API 클라이언트
+
+# 로컬 모듈
+from config import config                                    # 설정 관리
+from chart_generator import chart_generator                  # 차트 생성 엔진
+from mcp_logger import mcp_logger, log_mcp_warning, log_mcp_error  # 로깅 시스템
+
+# ==========================================
+# MCP 실제 서버 클래스
+# ==========================================
 
 class RealMCPServer:
-    """실제 Anthropic API를 사용하는 MCP 서버"""
+    """
+    Anthropic Claude API를 사용하는 실제 MCP 서버
+    
+    이 클래스는 MCP 게시판의 핵심 AI 기능을 담당합니다.
+    자연어 입력을 받아 AI를 통해 파싱하고, 데이터베이스에서 정보를 조회하여
+    동적으로 Chart.js 코드나 게시글 관리 작업을 수행합니다.
+    
+    주요 책임:
+    - Anthropic API 클라이언트 관리
+    - 자연어 명령 파싱 (AI + 폴백 정규식)
+    - 차트 코드 생성 (AI + 기본 템플릿)
+    - 게시글 관리 명령 처리
+    - 성능 모니터링 및 로깅
+    """
     
     def __init__(self):
+        """
+        MCP 서버 초기화
+        
+        차트 생성기 연결과 Anthropic 클라이언트 초기화를 수행합니다.
+        API 키가 없으면 시뮬레이션 모드로 동작합니다.
+        """
+        # 차트 생성 엔진 연결
         self.chart_gen = chart_generator
+        
+        # Anthropic API 클라이언트 (초기값 None)
         self.client: Optional[AsyncAnthropic] = None
+        
+        # 클라이언트 초기화 시도
         self._initialize_client()
     
     def _initialize_client(self):
-        """Anthropic 클라이언트 초기화"""
+        """
+        Anthropic API 클라이언트 초기화
+        
+        환경변수에서 API 키를 읽어와 Anthropic 클라이언트를 초기화합니다.
+        API 키가 없거나 초기화에 실패하면 시뮬레이션 모드로 전환됩니다.
+        """
         if config.is_api_key_configured():
             try:
+                # Anthropic 비동기 클라이언트 생성
                 self.client = AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
                 print("✅ Anthropic 클라이언트가 초기화되었습니다.")
             except Exception as e:
+                # 초기화 실패 시 시뮬레이션 모드로 전환
                 print(f"❌ Anthropic 클라이언트 초기화 실패: {e}")
                 self.client = None
         else:
@@ -34,7 +92,14 @@ class RealMCPServer:
             self.client = None
     
     def is_real_mcp_available(self) -> bool:
-        """실제 MCP 사용 가능 여부 확인"""
+        """
+        실제 MCP 사용 가능 여부 확인
+        
+        Anthropic 클라이언트가 성공적으로 초기화되었고 API 키가 설정되었는지 확인합니다.
+        
+        Returns:
+            bool: 실제 MCP 사용 가능 여부
+        """
         return self.client is not None and config.is_api_key_configured()
     
     async def generate_multi_author_chart(self, author_names: List[str], chart_type: str = "bar") -> Dict[str, Any]:
